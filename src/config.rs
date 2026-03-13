@@ -108,7 +108,13 @@ impl Config {
         config.repos = config
             .repos
             .iter()
-            .map(|p| expand_tilde(p).to_string_lossy().to_string())
+            .map(|p| {
+                let expanded = expand_tilde(p);
+                std::fs::canonicalize(&expanded)
+                    .unwrap_or(expanded)
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
 
         Ok(config)
