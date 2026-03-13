@@ -6,6 +6,7 @@ mod watcher;
 
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::terminal;
 use model::Message;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -78,10 +79,13 @@ fn main() {
         orig_hook(info);
     }));
 
+    // Use actual terminal width, falling back to config
+    let mut width = terminal::size().map(|(cols, _)| cols as usize).unwrap_or(cfg.ui.width);
+
     // Initial render
     ui::render(
         &repos,
-        cfg.ui.width,
+        width,
         cfg.ui.color,
         cfg.ui.show_clean,
         cfg.ui.blank_line_between_repos,
@@ -91,8 +95,8 @@ fn main() {
     loop {
         // Poll for terminal events
         if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-            if let Ok(Event::Key(key)) = event::read() {
-                match key.code {
+            match event::read() {
+                Ok(Event::Key(key)) => match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('r') => {
@@ -106,14 +110,25 @@ fn main() {
                         }
                         ui::render(
                             &repos,
-                            cfg.ui.width,
+                            width,
                             cfg.ui.color,
                             cfg.ui.show_clean,
                             cfg.ui.blank_line_between_repos,
                         );
                     }
                     _ => {}
+                },
+                Ok(Event::Resize(cols, _rows)) => {
+                    width = cols as usize;
+                    ui::render(
+                        &repos,
+                        width,
+                        cfg.ui.color,
+                        cfg.ui.show_clean,
+                        cfg.ui.blank_line_between_repos,
+                    );
                 }
+                _ => {}
             }
         }
 
@@ -148,7 +163,7 @@ fn main() {
         if changed {
             ui::render(
                 &repos,
-                cfg.ui.width,
+                width,
                 cfg.ui.color,
                 cfg.ui.show_clean,
                 cfg.ui.blank_line_between_repos,
