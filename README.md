@@ -55,13 +55,12 @@ Requires: Rust toolchain, macOS, Git.
 ## Usage
 
 ```bash
-# Create a config file
-cp config.sample.yml config.yml
-# Edit repos list to point to your repositories
-vim config.yml
-
-# Run
+# Run with a config file
 git-watch --config config.yml
+
+# Or simply run without a config file — uses defaults
+# and auto-discovers git repos in the current directory
+git-watch
 ```
 
 ### Keyboard
@@ -94,7 +93,7 @@ ui:
   blank_line_between_repos: true
 ```
 
-All config sections except `repos` are optional and have sensible defaults.
+The config file is optional. When no config file is found, git-watch uses the default values shown above and auto-discovers git repositories in the current directory. All config sections (including `repos`) are optional and have sensible defaults.
 
 ## Architecture
 

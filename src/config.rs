@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub repos: Vec<String>,
@@ -117,10 +117,12 @@ fn expand_tilde(path: &str) -> PathBuf {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
-        let mut config: Config =
-            serde_yml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+        let mut config: Config = match fs::read_to_string(path) {
+            Ok(content) => serde_yml::from_str(&content)
+                .map_err(|e| format!("Failed to parse config: {}", e))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(e) => return Err(format!("Failed to read config file: {}", e)),
+        };
 
         if config.repos.is_empty() {
             config.repos = discover_repos_in_cwd();
