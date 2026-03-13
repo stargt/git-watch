@@ -1,0 +1,19 @@
+repos:
+  - ~/work/api-server
+  - ~/work/web-app
+  - ~/work/cli-tool
+  - ~/work/docs
+
+watch:
+  debounce_ms: 200
+  reconcile_interval_sec: 60
+
+git:
+  command_timeout_sec: 3
+  max_concurrent_checks: 4
+
+ui:
+  width: 30
+  color: true
+  show_clean: true
+  blank_line_between_repos: true

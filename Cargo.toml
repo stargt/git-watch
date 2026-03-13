@@ -1,0 +1,18 @@
+[package]
+name = "git-watch"
+version = "0.1.0"
+edition = "2021"
+description = "macOS-only terminal UI for monitoring multiple Git repositories"
+
+[dependencies]
+notify = "8"
+serde = { version = "1", features = ["derive"] }
+serde_yml = "0.0.12"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
