@@ -94,15 +94,22 @@ fn discover_repos_in_cwd() -> Vec<String> {
     let Ok(cwd) = std::env::current_dir() else {
         return Vec::new();
     };
-    let Ok(entries) = fs::read_dir(&cwd) else {
-        return Vec::new();
-    };
-    let mut repos: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().join(".git").exists())
-        .map(|e| e.path().to_string_lossy().to_string())
-        .collect();
-    repos.sort();
+    let mut repos: Vec<String> = Vec::new();
+
+    if cwd.join(".git").exists() {
+        repos.push(cwd.to_string_lossy().to_string());
+    }
+
+    if let Ok(entries) = fs::read_dir(&cwd) {
+        let mut children: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join(".git").exists())
+            .map(|e| e.path().to_string_lossy().to_string())
+            .collect();
+        children.sort();
+        repos.extend(children);
+    }
+
     repos
 }
 
