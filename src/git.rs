@@ -25,6 +25,18 @@ pub fn refresh_repo(name: &str, path: &Path, _timeout_sec: u64) -> RepoState {
         }
     };
 
+    let has_untracked = match Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard", "--error-unmatch", "."])
+        .current_dir(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        Ok(s) => s.success(),
+        Err(_) => false,
+    };
+    let unstaged = unstaged || has_untracked;
+
     let staged = match Command::new("git")
         .args(["diff", "--cached", "--quiet"])
         .current_dir(path)
