@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub repos: Vec<String>,
     #[serde(default)]
     pub watch: WatchConfig,
@@ -89,6 +90,22 @@ fn default_true() -> bool {
     true
 }
 
+fn discover_repos_in_cwd() -> Vec<String> {
+    let Ok(cwd) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(&cwd) else {
+        return Vec::new();
+    };
+    let mut repos: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join(".git").exists())
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+    repos.sort();
+    repos
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
@@ -104,6 +121,10 @@ impl Config {
             fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
         let mut config: Config =
             serde_yml::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        if config.repos.is_empty() {
+            config.repos = discover_repos_in_cwd();
+        }
 
         config.repos = config
             .repos
