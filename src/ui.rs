@@ -136,7 +136,7 @@ pub fn render_detail(repo: &RepoState, detail: &DetailedStatus, width: usize, co
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Dim));
     }
-    let _ = queue!(out, Print(" [Esc] back  [r] refresh"));
+    let _ = queue!(out, Print(" [←/Esc] back  [r] refresh"));
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Reset));
     }

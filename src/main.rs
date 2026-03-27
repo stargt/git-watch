@@ -176,7 +176,7 @@ fn main() {
                             _ => {}
                         },
                         ViewMode::Detail { index, .. } => match key.code {
-                            KeyCode::Esc | KeyCode::Char('q') => {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                                 view = ViewMode::List;
                                 render_current(&repos, &view, width, selected);
                             }
