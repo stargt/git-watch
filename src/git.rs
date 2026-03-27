@@ -1,4 +1,4 @@
-use crate::model::{RepoState, StatusKind};
+use crate::model::{DetailedStatus, RepoState, StatusKind};
 use std::path::Path;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -93,6 +93,46 @@ pub fn refresh_repo(name: &str, path: &Path, _timeout_sec: u64) -> RepoState {
         last_refresh: Instant::now(),
         error_msg: None,
     }
+}
+
+pub fn detailed_status(path: &Path) -> DetailedStatus {
+    let parse_lines = |output: std::process::Output| -> Vec<String> {
+        if output.status.success() {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    };
+
+    let staged = Command::new("git")
+        .args(["diff", "--cached", "--name-status"])
+        .current_dir(path)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(parse_lines)
+        .unwrap_or_default();
+
+    let unstaged = Command::new("git")
+        .args(["diff", "--name-status"])
+        .current_dir(path)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(parse_lines)
+        .unwrap_or_default();
+
+    let untracked = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(path)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(parse_lines)
+        .unwrap_or_default();
+
+    DetailedStatus { staged, unstaged, untracked }
 }
 
 pub fn format_age(timestamp: i64) -> String {

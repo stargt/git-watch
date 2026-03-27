@@ -7,7 +7,7 @@ mod watcher;
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal;
-use model::Message;
+use model::{Message, StatusKind, ViewMode};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -18,6 +18,22 @@ struct Args {
     /// Path to config file
     #[arg(short, long, default_value = "config.yml")]
     config: PathBuf,
+}
+
+fn is_visible(repo: &model::RepoState, show_clean: bool) -> bool {
+    show_clean || !matches!(repo.status, StatusKind::Clean)
+}
+
+fn first_visible(repos: &[model::RepoState], show_clean: bool) -> Option<usize> {
+    repos.iter().position(|r| is_visible(r, show_clean))
+}
+
+fn next_visible(repos: &[model::RepoState], current: usize, show_clean: bool) -> Option<usize> {
+    (current + 1..repos.len()).find(|&i| is_visible(&repos[i], show_clean))
+}
+
+fn prev_visible(repos: &[model::RepoState], current: usize, show_clean: bool) -> Option<usize> {
+    (0..current).rev().find(|&i| is_visible(&repos[i], show_clean))
 }
 
 fn main() {
@@ -82,51 +98,110 @@ fn main() {
     // Use actual terminal width, falling back to config
     let mut width = terminal::size().map(|(cols, _)| cols as usize).unwrap_or(cfg.ui.width);
 
+    let mut selected: usize = first_visible(&repos, cfg.ui.show_clean).unwrap_or(0);
+    let mut view = ViewMode::List;
+
+    let render_current = |repos: &[model::RepoState], view: &ViewMode, width, selected| {
+        match view {
+            ViewMode::List => ui::render(
+                repos,
+                width,
+                cfg.ui.color,
+                cfg.ui.show_clean,
+                cfg.ui.blank_line_between_repos,
+                selected,
+            ),
+            ViewMode::Detail { index, ref status } => {
+                ui::render_detail(&repos[*index], status, width, cfg.ui.color);
+            }
+        }
+    };
+
     // Initial render
-    ui::render(
-        &repos,
-        width,
-        cfg.ui.color,
-        cfg.ui.show_clean,
-        cfg.ui.blank_line_between_repos,
-    );
+    render_current(&repos, &view, width, selected);
 
     // Event loop
     loop {
         // Poll for terminal events
         if event::poll(Duration::from_millis(100)).unwrap_or(false) {
             match event::read() {
-                Ok(Event::Key(key)) => match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('r') => {
-                        // Force refresh all
-                        for repo in &mut repos {
-                            *repo = git::refresh_repo(
-                                &repo.name,
-                                &repo.path,
-                                cfg.git.command_timeout_sec,
-                            );
-                        }
-                        ui::render(
-                            &repos,
-                            width,
-                            cfg.ui.color,
-                            cfg.ui.show_clean,
-                            cfg.ui.blank_line_between_repos,
-                        );
+                Ok(Event::Key(key)) => {
+                    // Ctrl+C always quits
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        break;
                     }
-                    _ => {}
-                },
+
+                    match &view {
+                        ViewMode::List => match key.code {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if let Some(idx) =
+                                    prev_visible(&repos, selected, cfg.ui.show_clean)
+                                {
+                                    selected = idx;
+                                    render_current(&repos, &view, width, selected);
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if let Some(idx) =
+                                    next_visible(&repos, selected, cfg.ui.show_clean)
+                                {
+                                    selected = idx;
+                                    render_current(&repos, &view, width, selected);
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if selected < repos.len() {
+                                    let detail =
+                                        git::detailed_status(&repos[selected].path);
+                                    view = ViewMode::Detail {
+                                        index: selected,
+                                        status: detail,
+                                    };
+                                    render_current(&repos, &view, width, selected);
+                                }
+                            }
+                            KeyCode::Char('r') => {
+                                for repo in &mut repos {
+                                    *repo = git::refresh_repo(
+                                        &repo.name,
+                                        &repo.path,
+                                        cfg.git.command_timeout_sec,
+                                    );
+                                }
+                                render_current(&repos, &view, width, selected);
+                            }
+                            _ => {}
+                        },
+                        ViewMode::Detail { index, .. } => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                view = ViewMode::List;
+                                render_current(&repos, &view, width, selected);
+                            }
+                            KeyCode::Char('r') => {
+                                let idx = *index;
+                                repos[idx] = git::refresh_repo(
+                                    &repos[idx].name,
+                                    &repos[idx].path,
+                                    cfg.git.command_timeout_sec,
+                                );
+                                let detail =
+                                    git::detailed_status(&repos[idx].path);
+                                view = ViewMode::Detail {
+                                    index: idx,
+                                    status: detail,
+                                };
+                                render_current(&repos, &view, width, selected);
+                            }
+                            _ => {}
+                        },
+                    }
+                }
                 Ok(Event::Resize(cols, _rows)) => {
                     width = cols as usize;
-                    ui::render(
-                        &repos,
-                        width,
-                        cfg.ui.color,
-                        cfg.ui.show_clean,
-                        cfg.ui.blank_line_between_repos,
-                    );
+                    render_current(&repos, &view, width, selected);
                 }
                 _ => {}
             }
@@ -161,13 +236,16 @@ fn main() {
         }
 
         if changed {
-            ui::render(
-                &repos,
-                width,
-                cfg.ui.color,
-                cfg.ui.show_clean,
-                cfg.ui.blank_line_between_repos,
-            );
+            // If in detail view and the viewed repo changed, refresh detail too
+            if let ViewMode::Detail { index, .. } = &view {
+                let idx = *index;
+                let detail = git::detailed_status(&repos[idx].path);
+                view = ViewMode::Detail {
+                    index: idx,
+                    status: detail,
+                };
+            }
+            render_current(&repos, &view, width, selected);
         }
     }
 

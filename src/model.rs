@@ -40,3 +40,15 @@ pub enum Message {
     ReconcileAll,
     Quit,
 }
+
+#[derive(Debug, Clone)]
+pub struct DetailedStatus {
+    pub staged: Vec<String>,
+    pub unstaged: Vec<String>,
+    pub untracked: Vec<String>,
+}
+
+pub enum ViewMode {
+    List,
+    Detail { index: usize, status: DetailedStatus },
+}

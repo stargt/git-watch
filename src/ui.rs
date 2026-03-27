@@ -1,5 +1,5 @@
 use crate::git::format_age;
-use crate::model::{RepoState, StatusKind};
+use crate::model::{DetailedStatus, RepoState, StatusKind};
 use crossterm::{
     cursor,
     execute, queue,
@@ -24,12 +24,13 @@ pub fn render(
     color: bool,
     show_clean: bool,
     blank_line_between: bool,
+    selected: usize,
 ) {
     let mut out = io::stdout();
     let _ = queue!(out, cursor::MoveTo(0, 0), Clear(ClearType::All));
 
     let mut first = true;
-    for repo in repos {
+    for (i, repo) in repos.iter().enumerate() {
         if !show_clean && matches!(repo.status, StatusKind::Clean) {
             continue;
         }
@@ -39,10 +40,105 @@ pub fn render(
         }
         first = false;
 
+        let is_selected = i == selected;
+        if is_selected && color {
+            let _ = queue!(out, SetAttribute(Attribute::Reverse));
+        }
         render_line1(&mut out, repo, width, color);
+        if is_selected && color {
+            let _ = queue!(out, SetAttribute(Attribute::Reset));
+        } else if is_selected {
+            // non-color: we already rendered, no extra reset needed
+        }
         let _ = queue!(out, Print("\r\n"));
         render_line2(&mut out, repo, width, color);
         let _ = queue!(out, Print("\r\n"));
+    }
+
+    // Key hints
+    let _ = queue!(out, Print("\r\n"));
+    if color {
+        let _ = queue!(out, SetAttribute(Attribute::Dim));
+    }
+    let _ = queue!(out, Print(" [↑↓] select  [Enter] detail  [q] quit"));
+    if color {
+        let _ = queue!(out, SetAttribute(Attribute::Reset));
+    }
+
+    let _ = out.flush();
+}
+
+pub fn render_detail(repo: &RepoState, detail: &DetailedStatus, width: usize, color: bool) {
+    let mut out = io::stdout();
+    let _ = queue!(out, cursor::MoveTo(0, 0), Clear(ClearType::All));
+
+    // Repo name
+    let _ = queue!(out, Print("  "), Print(&repo.name), Print("\r\n"));
+    // Separator
+    let sep_len = width.min(repo.name.len() + 4);
+    let _ = queue!(out, Print("  "));
+    for _ in 0..sep_len {
+        let _ = queue!(out, Print("─"));
+    }
+    let _ = queue!(out, Print("\r\n"));
+
+    if !detail.staged.is_empty() {
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::Blue));
+        }
+        let _ = queue!(out, Print("  Staged:\r\n"));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        for line in &detail.staged {
+            let _ = queue!(out, Print("    "), Print(line), Print("\r\n"));
+        }
+    }
+
+    if !detail.unstaged.is_empty() {
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::Yellow));
+        }
+        let _ = queue!(out, Print("  Unstaged:\r\n"));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        for line in &detail.unstaged {
+            let _ = queue!(out, Print("    "), Print(line), Print("\r\n"));
+        }
+    }
+
+    if !detail.untracked.is_empty() {
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::DarkGrey));
+        }
+        let _ = queue!(out, Print("  Untracked:\r\n"));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        for line in &detail.untracked {
+            let _ = queue!(out, Print("    "), Print(line), Print("\r\n"));
+        }
+    }
+
+    if detail.staged.is_empty() && detail.unstaged.is_empty() && detail.untracked.is_empty() {
+        if color {
+            let _ = queue!(out, SetAttribute(Attribute::Dim));
+        }
+        let _ = queue!(out, Print("  (clean)\r\n"));
+        if color {
+            let _ = queue!(out, SetAttribute(Attribute::Reset));
+        }
+    }
+
+    // Key hints
+    let _ = queue!(out, Print("\r\n"));
+    if color {
+        let _ = queue!(out, SetAttribute(Attribute::Dim));
+    }
+    let _ = queue!(out, Print(" [Esc] back  [r] refresh"));
+    if color {
+        let _ = queue!(out, SetAttribute(Attribute::Reset));
     }
 
     let _ = out.flush();
