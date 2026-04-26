@@ -7,13 +7,14 @@ repos:
 watch:
   debounce_ms: 200
   reconcile_interval_sec: 60
+  fetch_interval_sec: 300
 
 git:
   command_timeout_sec: 3
-  max_concurrent_checks: 4
 
 ui:
   width: 30
   color: true
   show_clean: true
   blank_line_between_repos: true
+  compact_threshold: 40

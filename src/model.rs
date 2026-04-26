@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub enum StatusKind {
@@ -10,6 +9,13 @@ pub enum StatusKind {
     Error,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SyncState {
+    pub has_upstream: bool,
+    pub ahead: u32,
+    pub behind: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct RepoState {
     pub name: String,
@@ -17,8 +23,8 @@ pub struct RepoState {
     pub status: StatusKind,
     pub commit_summary: String,
     pub commit_timestamp: Option<i64>,
-    pub last_refresh: Instant,
     pub error_msg: Option<String>,
+    pub sync: SyncState,
 }
 
 impl RepoState {
@@ -29,8 +35,8 @@ impl RepoState {
             status: StatusKind::Error,
             commit_summary: String::new(),
             commit_timestamp: None,
-            last_refresh: Instant::now(),
             error_msg: Some(msg),
+            sync: SyncState::default(),
         }
     }
 }
@@ -38,7 +44,8 @@ impl RepoState {
 pub enum Message {
     RepoChanged(PathBuf),
     ReconcileAll,
-    Quit,
+    FetchStarted,
+    FetchFinished,
 }
 
 #[derive(Debug, Clone)]

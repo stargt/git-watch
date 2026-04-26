@@ -81,16 +81,17 @@ repos:
 watch:
   debounce_ms: 200              # Per-repo debounce window
   reconcile_interval_sec: 60    # Periodic full refresh interval
+  fetch_interval_sec: 300       # Periodic `git fetch` interval
 
 git:
-  command_timeout_sec: 3        # Timeout for git subprocess calls
-  max_concurrent_checks: 4      # (reserved for future use)
+  command_timeout_sec: 3        # Timeout for git subprocess calls (reserved, not yet enforced)
 
 ui:
-  width: 30                     # Target terminal width
+  width: 30                     # Fallback width (actual terminal width auto-detected)
   color: true                   # Enable color output
   show_clean: true              # Show clean repos
   blank_line_between_repos: true
+  compact_threshold: 40         # Below this width, use compact 4-dot sync glyphs
 ```
 
 The config file is optional. When no config file is found, git-watch uses the default values shown above and auto-discovers git repositories in the current directory. All config sections (including `repos`) are optional and have sensible defaults.

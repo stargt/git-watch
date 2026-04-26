@@ -1,8 +1,9 @@
+use crate::git;
 use crate::model::Message;
 use notify::{recommended_watcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -93,4 +94,42 @@ pub fn start_reconciliation(interval_sec: u64, tx: Sender<Message>) {
         thread::sleep(Duration::from_secs(interval_sec));
         let _ = tx.send(Message::ReconcileAll);
     });
+}
+
+pub struct FetchTrigger {
+    sender: Sender<()>,
+}
+
+impl FetchTrigger {
+    pub fn trigger(&self) {
+        let _ = self.sender.send(());
+    }
+}
+
+pub fn start_fetcher(
+    repo_paths: Vec<PathBuf>,
+    interval_sec: u64,
+    tx: Sender<Message>,
+) -> FetchTrigger {
+    let (trigger_tx, trigger_rx) = mpsc::channel::<()>();
+
+    thread::spawn(move || {
+        let interval = Duration::from_secs(interval_sec);
+        loop {
+            // Wait for either timer expiry or manual trigger.
+            // Both paths fall through to the fetch step below.
+            let _ = trigger_rx.recv_timeout(interval);
+            // Drain extra triggers so multiple presses collapse into one fetch.
+            while trigger_rx.try_recv().is_ok() {}
+
+            let _ = tx.send(Message::FetchStarted);
+            for path in &repo_paths {
+                git::fetch_repo(path);
+            }
+            let _ = tx.send(Message::FetchFinished);
+            let _ = tx.send(Message::ReconcileAll);
+        }
+    });
+
+    FetchTrigger { sender: trigger_tx }
 }

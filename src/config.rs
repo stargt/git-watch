@@ -20,6 +20,8 @@ pub struct WatchConfig {
     pub debounce_ms: u64,
     #[serde(default = "default_reconcile_interval_sec")]
     pub reconcile_interval_sec: u64,
+    #[serde(default = "default_fetch_interval_sec")]
+    pub fetch_interval_sec: u64,
 }
 
 impl Default for WatchConfig {
@@ -27,6 +29,7 @@ impl Default for WatchConfig {
         Self {
             debounce_ms: default_debounce_ms(),
             reconcile_interval_sec: default_reconcile_interval_sec(),
+            fetch_interval_sec: default_fetch_interval_sec(),
         }
     }
 }
@@ -35,15 +38,12 @@ impl Default for WatchConfig {
 pub struct GitConfig {
     #[serde(default = "default_command_timeout_sec")]
     pub command_timeout_sec: u64,
-    #[serde(default = "default_max_concurrent_checks")]
-    pub max_concurrent_checks: usize,
 }
 
 impl Default for GitConfig {
     fn default() -> Self {
         Self {
             command_timeout_sec: default_command_timeout_sec(),
-            max_concurrent_checks: default_max_concurrent_checks(),
         }
     }
 }
@@ -58,6 +58,8 @@ pub struct UiConfig {
     pub show_clean: bool,
     #[serde(default = "default_true")]
     pub blank_line_between_repos: bool,
+    #[serde(default = "default_compact_threshold")]
+    pub compact_threshold: usize,
 }
 
 impl Default for UiConfig {
@@ -67,6 +69,7 @@ impl Default for UiConfig {
             color: true,
             show_clean: true,
             blank_line_between_repos: true,
+            compact_threshold: default_compact_threshold(),
         }
     }
 }
@@ -80,11 +83,14 @@ fn default_reconcile_interval_sec() -> u64 {
 fn default_command_timeout_sec() -> u64 {
     3
 }
-fn default_max_concurrent_checks() -> usize {
-    4
-}
 fn default_width() -> usize {
     30
+}
+fn default_compact_threshold() -> usize {
+    40
+}
+fn default_fetch_interval_sec() -> u64 {
+    300
 }
 fn default_true() -> bool {
     true

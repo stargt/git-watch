@@ -137,6 +137,70 @@ fn test_git_log_format() {
     assert!(ts > 0);
 }
 
+#[test]
+fn test_sync_state_no_upstream() {
+    let dir = tempdir();
+    run(&dir, &["git", "init"]);
+    run(&dir, &["git", "config", "user.email", "test@test.com"]);
+    run(&dir, &["git", "config", "user.name", "Test"]);
+    std::fs::write(dir.join("file.txt"), "hello").unwrap();
+    run(&dir, &["git", "add", "."]);
+    run(&dir, &["git", "commit", "-m", "init"]);
+
+    // No upstream — rev-parse @{u} should fail
+    let status = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!status.success(), "fresh repo should not have upstream");
+}
+
+#[test]
+fn test_sync_state_ahead_behind() {
+    // Create a "remote" bare repo and two clones that diverge
+    let upstream = tempdir();
+    run(&upstream, &["git", "init", "--bare"]);
+
+    let dir = tempdir();
+    run(&dir, &["git", "init"]);
+    run(&dir, &["git", "config", "user.email", "test@test.com"]);
+    run(&dir, &["git", "config", "user.name", "Test"]);
+    run(&dir, &["git", "remote", "add", "origin", upstream.to_str().unwrap()]);
+    std::fs::write(dir.join("file.txt"), "v1").unwrap();
+    run(&dir, &["git", "add", "."]);
+    run(&dir, &["git", "commit", "-m", "v1"]);
+    // Determine current branch (could be main or master depending on git config)
+    let branch_out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+    run(&dir, &["git", "push", "-u", "origin", &branch]);
+
+    // Add 2 local commits → ahead by 2
+    std::fs::write(dir.join("file.txt"), "v2").unwrap();
+    run(&dir, &["git", "commit", "-am", "v2"]);
+    std::fs::write(dir.join("file.txt"), "v3").unwrap();
+    run(&dir, &["git", "commit", "-am", "v3"]);
+
+    let output = Command::new("git")
+        .args(["rev-list", "--left-right", "--count", "@{u}...HEAD"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.split_whitespace().collect();
+    assert_eq!(parts.len(), 2);
+    let behind: u32 = parts[0].parse().unwrap();
+    let ahead: u32 = parts[1].parse().unwrap();
+    assert_eq!(behind, 0);
+    assert_eq!(ahead, 2);
+}
+
 // Helpers
 
 fn format_age(timestamp: i64) -> String {

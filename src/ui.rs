@@ -1,5 +1,5 @@
 use crate::git::format_age;
-use crate::model::{DetailedStatus, RepoState, StatusKind};
+use crate::model::{DetailedStatus, RepoState, StatusKind, SyncState};
 use crossterm::{
     cursor,
     execute, queue,
@@ -25,6 +25,8 @@ pub fn render(
     show_clean: bool,
     blank_line_between: bool,
     selected: usize,
+    compact_threshold: usize,
+    is_fetching: bool,
 ) {
     let mut out = io::stdout();
     let _ = queue!(out, cursor::MoveTo(0, 0), Clear(ClearType::All));
@@ -44,11 +46,9 @@ pub fn render(
         if is_selected && color {
             let _ = queue!(out, SetAttribute(Attribute::Reverse));
         }
-        render_line1(&mut out, repo, width, color);
+        render_line1(&mut out, repo, width, color, compact_threshold);
         if is_selected && color {
             let _ = queue!(out, SetAttribute(Attribute::Reset));
-        } else if is_selected {
-            // non-color: we already rendered, no extra reset needed
         }
         let _ = queue!(out, Print("\r\n"));
         render_line2(&mut out, repo, width, color);
@@ -60,7 +60,11 @@ pub fn render(
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Dim));
     }
-    let _ = queue!(out, Print(" [↑↓] select  [Enter] detail  [q] quit"));
+    if is_fetching {
+        let _ = queue!(out, Print(" [fetching...]"));
+    } else {
+        let _ = queue!(out, Print(" [↑↓] sel  [Enter] detail  [f] fetch  [q] quit"));
+    }
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Reset));
     }
@@ -144,7 +148,13 @@ pub fn render_detail(repo: &RepoState, detail: &DetailedStatus, width: usize, co
     let _ = out.flush();
 }
 
-fn render_line1(out: &mut impl Write, repo: &RepoState, width: usize, color: bool) {
+fn render_line1(
+    out: &mut impl Write,
+    repo: &RepoState,
+    width: usize,
+    color: bool,
+    compact_threshold: usize,
+) {
     let (sym1, col1, sym2, col2) = match repo.status {
         StatusKind::StagedOnly => ("●", Color::Blue, "·", Color::DarkGrey),
         StatusKind::UnstagedOnly => ("·", Color::DarkGrey, "●", Color::Yellow),
@@ -166,11 +176,106 @@ fn render_line1(out: &mut impl Write, repo: &RepoState, width: usize, color: boo
         let _ = queue!(out, Print(sym1), Print(sym2));
     }
 
-    let _ = queue!(out, Print(" "));
+    if matches!(repo.status, StatusKind::Error) {
+        let _ = queue!(out, Print(" "));
+        let max_name = width.saturating_sub(3);
+        let name = trim_str(&repo.name, max_name);
+        let _ = queue!(out, Print(name));
+        return;
+    }
 
-    let max_name = if width > 3 { width - 3 } else { width };
+    let prefix_extra = if width < compact_threshold {
+        // D layout: ●●↑↓ name
+        write_sync_compact(out, &repo.sync, color);
+        let _ = queue!(out, Print(" "));
+        3 // 2 sync glyphs + 1 space
+    } else {
+        // B layout: ●● [↑N↓N | ⊘] name (sync segment optional)
+        let _ = queue!(out, Print(" "));
+        let sync_len = write_sync_verbose(out, &repo.sync, color);
+        if sync_len > 0 {
+            let _ = queue!(out, Print(" "));
+            1 + sync_len + 1
+        } else {
+            1
+        }
+    };
+
+    let max_name = width.saturating_sub(2 + prefix_extra);
     let name = trim_str(&repo.name, max_name);
     let _ = queue!(out, Print(name));
+}
+
+fn write_sync_compact(out: &mut impl Write, sync: &SyncState, color: bool) {
+    let (g1, c1, g2, c2) = if !sync.has_upstream {
+        ("⊘", Color::DarkGrey, "⊘", Color::DarkGrey)
+    } else {
+        let a = if sync.ahead > 0 {
+            ("↑", Color::Green)
+        } else {
+            ("·", Color::DarkGrey)
+        };
+        let b = if sync.behind > 0 {
+            ("↓", Color::Magenta)
+        } else {
+            ("·", Color::DarkGrey)
+        };
+        (a.0, a.1, b.0, b.1)
+    };
+    if color {
+        let _ = queue!(
+            out,
+            SetForegroundColor(c1),
+            Print(g1),
+            SetForegroundColor(c2),
+            Print(g2),
+            ResetColor,
+        );
+    } else {
+        let _ = queue!(out, Print(g1), Print(g2));
+    }
+}
+
+fn write_sync_verbose(out: &mut impl Write, sync: &SyncState, color: bool) -> usize {
+    if !sync.has_upstream {
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::DarkGrey));
+        }
+        let _ = queue!(out, Print("⊘"));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        return 1;
+    }
+    if sync.ahead == 0 && sync.behind == 0 {
+        return 0;
+    }
+    let mut count = 0;
+    if sync.ahead > 0 {
+        let s = format!("↑{}", sync.ahead);
+        let len = s.chars().count();
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::Green));
+        }
+        let _ = queue!(out, Print(&s));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        count += len;
+    }
+    if sync.behind > 0 {
+        let s = format!("↓{}", sync.behind);
+        let len = s.chars().count();
+        if color {
+            let _ = queue!(out, SetForegroundColor(Color::Magenta));
+        }
+        let _ = queue!(out, Print(&s));
+        if color {
+            let _ = queue!(out, ResetColor);
+        }
+        count += len;
+    }
+    count
 }
 
 fn render_line2(out: &mut impl Write, repo: &RepoState, width: usize, color: bool) {

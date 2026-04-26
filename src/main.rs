@@ -36,6 +36,14 @@ fn prev_visible(repos: &[model::RepoState], current: usize, show_clean: bool) ->
     (0..current).rev().find(|&i| is_visible(&repos[i], show_clean))
 }
 
+fn watch_paths_clone(repos: &[model::RepoState]) -> Vec<PathBuf> {
+    repos
+        .iter()
+        .filter(|r| r.error_msg.is_none())
+        .map(|r| r.path.clone())
+        .collect()
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -64,14 +72,10 @@ fn main() {
     let (tx, rx) = mpsc::channel::<Message>();
 
     // Collect valid repo paths for watching
-    let watch_paths: Vec<PathBuf> = repos
-        .iter()
-        .filter(|r| r.error_msg.is_none())
-        .map(|r| r.path.clone())
-        .collect();
+    let watch_paths: Vec<PathBuf> = watch_paths_clone(&repos);
 
     // Start filesystem watcher
-    let _watcher = match watcher::start_watcher(watch_paths, cfg.watch.debounce_ms, tx.clone()) {
+    let _watcher = match watcher::start_watcher(watch_paths.clone(), cfg.watch.debounce_ms, tx.clone()) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("Failed to start watcher: {}", e);
@@ -81,6 +85,13 @@ fn main() {
 
     // Start reconciliation timer
     watcher::start_reconciliation(cfg.watch.reconcile_interval_sec, tx.clone());
+
+    // Start periodic fetcher (also handles manual triggers via fetch_trigger.trigger())
+    let fetch_trigger = watcher::start_fetcher(
+        watch_paths,
+        cfg.watch.fetch_interval_sec,
+        tx.clone(),
+    );
 
     // Enter terminal UI
     if let Err(e) = ui::enter_ui() {
@@ -100,8 +111,13 @@ fn main() {
 
     let mut selected: usize = first_visible(&repos, cfg.ui.show_clean).unwrap_or(0);
     let mut view = ViewMode::List;
+    let mut is_fetching = false;
 
-    let render_current = |repos: &[model::RepoState], view: &ViewMode, width, selected| {
+    let render_current = |repos: &[model::RepoState],
+                          view: &ViewMode,
+                          width,
+                          selected,
+                          is_fetching: bool| {
         match view {
             ViewMode::List => ui::render(
                 repos,
@@ -110,6 +126,8 @@ fn main() {
                 cfg.ui.show_clean,
                 cfg.ui.blank_line_between_repos,
                 selected,
+                cfg.ui.compact_threshold,
+                is_fetching,
             ),
             ViewMode::Detail { index, ref status } => {
                 ui::render_detail(&repos[*index], status, width, cfg.ui.color);
@@ -118,7 +136,7 @@ fn main() {
     };
 
     // Initial render
-    render_current(&repos, &view, width, selected);
+    render_current(&repos, &view, width, selected, is_fetching);
 
     // Event loop
     loop {
@@ -141,7 +159,7 @@ fn main() {
                                     prev_visible(&repos, selected, cfg.ui.show_clean)
                                 {
                                     selected = idx;
-                                    render_current(&repos, &view, width, selected);
+                                    render_current(&repos, &view, width, selected, is_fetching);
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
@@ -149,7 +167,7 @@ fn main() {
                                     next_visible(&repos, selected, cfg.ui.show_clean)
                                 {
                                     selected = idx;
-                                    render_current(&repos, &view, width, selected);
+                                    render_current(&repos, &view, width, selected, is_fetching);
                                 }
                             }
                             KeyCode::Enter => {
@@ -160,7 +178,7 @@ fn main() {
                                         index: selected,
                                         status: detail,
                                     };
-                                    render_current(&repos, &view, width, selected);
+                                    render_current(&repos, &view, width, selected, is_fetching);
                                 }
                             }
                             KeyCode::Char('r') => {
@@ -171,14 +189,17 @@ fn main() {
                                         cfg.git.command_timeout_sec,
                                     );
                                 }
-                                render_current(&repos, &view, width, selected);
+                                render_current(&repos, &view, width, selected, is_fetching);
+                            }
+                            KeyCode::Char('f') => {
+                                fetch_trigger.trigger();
                             }
                             _ => {}
                         },
                         ViewMode::Detail { index, .. } => match key.code {
                             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                                 view = ViewMode::List;
-                                render_current(&repos, &view, width, selected);
+                                render_current(&repos, &view, width, selected, is_fetching);
                             }
                             KeyCode::Char('r') => {
                                 let idx = *index;
@@ -193,7 +214,10 @@ fn main() {
                                     index: idx,
                                     status: detail,
                                 };
-                                render_current(&repos, &view, width, selected);
+                                render_current(&repos, &view, width, selected, is_fetching);
+                            }
+                            KeyCode::Char('f') => {
+                                fetch_trigger.trigger();
                             }
                             _ => {}
                         },
@@ -201,7 +225,7 @@ fn main() {
                 }
                 Ok(Event::Resize(cols, _rows)) => {
                     width = cols as usize;
-                    render_current(&repos, &view, width, selected);
+                    render_current(&repos, &view, width, selected, is_fetching);
                 }
                 _ => {}
             }
@@ -231,7 +255,14 @@ fn main() {
                     }
                     changed = true;
                 }
-                Message::Quit => break,
+                Message::FetchStarted => {
+                    is_fetching = true;
+                    changed = true;
+                }
+                Message::FetchFinished => {
+                    is_fetching = false;
+                    changed = true;
+                }
             }
         }
 
@@ -245,7 +276,7 @@ fn main() {
                     status: detail,
                 };
             }
-            render_current(&repos, &view, width, selected);
+            render_current(&repos, &view, width, selected, is_fetching);
         }
     }
 
