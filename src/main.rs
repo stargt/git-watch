@@ -7,9 +7,10 @@ mod watcher;
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal;
-use model::{Message, StatusKind, ViewMode};
+use model::{Message, OpKind, StatusKind, ViewMode};
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -42,6 +43,22 @@ fn watch_paths_clone(repos: &[model::RepoState]) -> Vec<PathBuf> {
         .filter(|r| r.error_msg.is_none())
         .map(|r| r.path.clone())
         .collect()
+}
+
+fn spawn_op(tx: &mpsc::Sender<Message>, repo: &model::RepoState, kind: OpKind) {
+    let tx = tx.clone();
+    let path = repo.path.clone();
+    thread::spawn(move || {
+        let result = match kind {
+            OpKind::Push => git::push_repo(&path),
+            OpKind::Pull => git::pull_repo(&path),
+        };
+        let _ = tx.send(Message::OpFinished {
+            repo: path,
+            kind,
+            result,
+        });
+    });
 }
 
 fn main() {
@@ -112,12 +129,15 @@ fn main() {
     let mut selected: usize = first_visible(&repos, cfg.ui.show_clean).unwrap_or(0);
     let mut view = ViewMode::List;
     let mut is_fetching = false;
+    let mut op_status: Option<String> = None;
+    let mut op_in_flight: Option<(PathBuf, OpKind)> = None;
 
     let render_current = |repos: &[model::RepoState],
                           view: &ViewMode,
                           width,
                           selected,
-                          is_fetching: bool| {
+                          is_fetching: bool,
+                          op_status: Option<&str>| {
         match view {
             ViewMode::List => ui::render(
                 repos,
@@ -128,15 +148,16 @@ fn main() {
                 selected,
                 cfg.ui.compact_threshold,
                 is_fetching,
+                op_status,
             ),
             ViewMode::Detail { index, ref status } => {
-                ui::render_detail(&repos[*index], status, width, cfg.ui.color);
+                ui::render_detail(&repos[*index], status, width, cfg.ui.color, op_status);
             }
         }
     };
 
     // Initial render
-    render_current(&repos, &view, width, selected, is_fetching);
+    render_current(&repos, &view, width, selected, is_fetching, op_status.as_deref());
 
     // Event loop
     loop {
@@ -151,6 +172,12 @@ fn main() {
                         break;
                     }
 
+                    let cleared = if op_in_flight.is_none() {
+                        op_status.take().is_some()
+                    } else {
+                        false
+                    };
+
                     match &view {
                         ViewMode::List => match key.code {
                             KeyCode::Char('q') => break,
@@ -159,7 +186,14 @@ fn main() {
                                     prev_visible(&repos, selected, cfg.ui.show_clean)
                                 {
                                     selected = idx;
-                                    render_current(&repos, &view, width, selected, is_fetching);
+                                    render_current(
+                                        &repos,
+                                        &view,
+                                        width,
+                                        selected,
+                                        is_fetching,
+                                        op_status.as_deref(),
+                                    );
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
@@ -167,7 +201,14 @@ fn main() {
                                     next_visible(&repos, selected, cfg.ui.show_clean)
                                 {
                                     selected = idx;
-                                    render_current(&repos, &view, width, selected, is_fetching);
+                                    render_current(
+                                        &repos,
+                                        &view,
+                                        width,
+                                        selected,
+                                        is_fetching,
+                                        op_status.as_deref(),
+                                    );
                                 }
                             }
                             KeyCode::Enter => {
@@ -178,7 +219,14 @@ fn main() {
                                         index: selected,
                                         status: detail,
                                     };
-                                    render_current(&repos, &view, width, selected, is_fetching);
+                                    render_current(
+                                        &repos,
+                                        &view,
+                                        width,
+                                        selected,
+                                        is_fetching,
+                                        op_status.as_deref(),
+                                    );
                                 }
                             }
                             KeyCode::Char('r') => {
@@ -189,17 +237,58 @@ fn main() {
                                         cfg.git.command_timeout_sec,
                                     );
                                 }
-                                render_current(&repos, &view, width, selected, is_fetching);
+                                render_current(
+                                    &repos,
+                                    &view,
+                                    width,
+                                    selected,
+                                    is_fetching,
+                                    op_status.as_deref(),
+                                );
                             }
                             KeyCode::Char('f') => {
                                 fetch_trigger.trigger();
+                            }
+                            KeyCode::Char('p') | KeyCode::Char('l') => {
+                                let kind = if matches!(key.code, KeyCode::Char('p')) {
+                                    OpKind::Push
+                                } else {
+                                    OpKind::Pull
+                                };
+                                if op_in_flight.is_none()
+                                    && selected < repos.len()
+                                    && repos[selected].error_msg.is_none()
+                                {
+                                    let r = &repos[selected];
+                                    op_in_flight = Some((r.path.clone(), kind));
+                                    op_status = Some(match kind {
+                                        OpKind::Push => format!("pushing {}...", r.name),
+                                        OpKind::Pull => format!("pulling {}...", r.name),
+                                    });
+                                    spawn_op(&tx, r, kind);
+                                    render_current(
+                                        &repos,
+                                        &view,
+                                        width,
+                                        selected,
+                                        is_fetching,
+                                        op_status.as_deref(),
+                                    );
+                                }
                             }
                             _ => {}
                         },
                         ViewMode::Detail { index, .. } => match key.code {
                             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Left => {
                                 view = ViewMode::List;
-                                render_current(&repos, &view, width, selected, is_fetching);
+                                render_current(
+                                    &repos,
+                                    &view,
+                                    width,
+                                    selected,
+                                    is_fetching,
+                                    op_status.as_deref(),
+                                );
                             }
                             KeyCode::Char('r') => {
                                 let idx = *index;
@@ -214,18 +303,71 @@ fn main() {
                                     index: idx,
                                     status: detail,
                                 };
-                                render_current(&repos, &view, width, selected, is_fetching);
+                                render_current(
+                                    &repos,
+                                    &view,
+                                    width,
+                                    selected,
+                                    is_fetching,
+                                    op_status.as_deref(),
+                                );
                             }
                             KeyCode::Char('f') => {
                                 fetch_trigger.trigger();
                             }
+                            KeyCode::Char('p') | KeyCode::Char('l') => {
+                                let kind = if matches!(key.code, KeyCode::Char('p')) {
+                                    OpKind::Push
+                                } else {
+                                    OpKind::Pull
+                                };
+                                let idx = *index;
+                                if op_in_flight.is_none()
+                                    && idx < repos.len()
+                                    && repos[idx].error_msg.is_none()
+                                {
+                                    let r = &repos[idx];
+                                    op_in_flight = Some((r.path.clone(), kind));
+                                    op_status = Some(match kind {
+                                        OpKind::Push => format!("pushing {}...", r.name),
+                                        OpKind::Pull => format!("pulling {}...", r.name),
+                                    });
+                                    spawn_op(&tx, r, kind);
+                                    render_current(
+                                        &repos,
+                                        &view,
+                                        width,
+                                        selected,
+                                        is_fetching,
+                                        op_status.as_deref(),
+                                    );
+                                }
+                            }
                             _ => {}
                         },
+                    }
+
+                    if cleared && op_status.is_none() {
+                        render_current(
+                            &repos,
+                            &view,
+                            width,
+                            selected,
+                            is_fetching,
+                            op_status.as_deref(),
+                        );
                     }
                 }
                 Ok(Event::Resize(cols, _rows)) => {
                     width = cols as usize;
-                    render_current(&repos, &view, width, selected, is_fetching);
+                    render_current(
+                        &repos,
+                        &view,
+                        width,
+                        selected,
+                        is_fetching,
+                        op_status.as_deref(),
+                    );
                 }
                 _ => {}
             }
@@ -263,6 +405,28 @@ fn main() {
                     is_fetching = false;
                     changed = true;
                 }
+                Message::OpFinished { repo, kind, result } => {
+                    if let Some((p, k)) = &op_in_flight {
+                        if p == &repo && *k == kind {
+                            op_in_flight = None;
+                        }
+                    }
+                    if let Some(rs) = repos.iter_mut().find(|r| r.path == repo) {
+                        let name = rs.name.clone();
+                        *rs = git::refresh_repo(
+                            &name,
+                            &repo,
+                            cfg.git.command_timeout_sec,
+                        );
+                        op_status = Some(match (kind, result) {
+                            (OpKind::Push, Ok(())) => format!("pushed: {}", name),
+                            (OpKind::Push, Err(e)) => format!("push failed: {}", e),
+                            (OpKind::Pull, Ok(())) => format!("pulled: {}", name),
+                            (OpKind::Pull, Err(e)) => format!("pull failed: {}", e),
+                        });
+                    }
+                    changed = true;
+                }
             }
         }
 
@@ -276,7 +440,14 @@ fn main() {
                     status: detail,
                 };
             }
-            render_current(&repos, &view, width, selected, is_fetching);
+            render_current(
+                &repos,
+                &view,
+                width,
+                selected,
+                is_fetching,
+                op_status.as_deref(),
+            );
         }
     }
 

@@ -41,11 +41,22 @@ impl RepoState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpKind {
+    Push,
+    Pull,
+}
+
 pub enum Message {
     RepoChanged(PathBuf),
     ReconcileAll,
     FetchStarted,
     FetchFinished,
+    OpFinished {
+        repo: PathBuf,
+        kind: OpKind,
+        result: Result<(), String>,
+    },
 }
 
 #[derive(Debug, Clone)]

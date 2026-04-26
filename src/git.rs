@@ -141,6 +141,41 @@ pub fn fetch_repo(path: &Path) {
         .status();
 }
 
+pub fn push_repo(path: &Path) -> Result<(), String> {
+    run_git(path, &["push", "-u", "origin", "HEAD"], "push failed")
+}
+
+pub fn pull_repo(path: &Path) -> Result<(), String> {
+    run_git(path, &["pull", "--rebase", "--autostash"], "pull failed")
+}
+
+fn run_git(path: &Path, args: &[&str], default_err: &str) -> Result<(), String> {
+    match Command::new("git")
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .current_dir(path)
+        .output()
+    {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let msg = stderr
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or(default_err)
+                .trim()
+                .to_string();
+            Err(if msg.is_empty() {
+                default_err.to_string()
+            } else {
+                msg
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub fn detailed_status(path: &Path) -> DetailedStatus {
     let parse_lines = |output: std::process::Output| -> Vec<String> {
         if output.status.success() {

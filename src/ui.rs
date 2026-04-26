@@ -27,6 +27,7 @@ pub fn render(
     selected: usize,
     compact_threshold: usize,
     is_fetching: bool,
+    op_status: Option<&str>,
 ) {
     let mut out = io::stdout();
     let _ = queue!(out, cursor::MoveTo(0, 0), Clear(ClearType::All));
@@ -60,10 +61,15 @@ pub fn render(
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Dim));
     }
-    if is_fetching {
+    if let Some(s) = op_status {
+        let _ = queue!(out, Print(" "), Print(s));
+    } else if is_fetching {
         let _ = queue!(out, Print(" [fetching...]"));
     } else {
-        let _ = queue!(out, Print(" [↑↓] sel  [Enter] detail  [f] fetch  [q] quit"));
+        let _ = queue!(
+            out,
+            Print(" [↑↓] sel  [Enter] detail  [p] push  [l] pull  [f] fetch  [q] quit")
+        );
     }
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Reset));
@@ -72,7 +78,13 @@ pub fn render(
     let _ = out.flush();
 }
 
-pub fn render_detail(repo: &RepoState, detail: &DetailedStatus, width: usize, color: bool) {
+pub fn render_detail(
+    repo: &RepoState,
+    detail: &DetailedStatus,
+    width: usize,
+    color: bool,
+    op_status: Option<&str>,
+) {
     let mut out = io::stdout();
     let _ = queue!(out, cursor::MoveTo(0, 0), Clear(ClearType::All));
 
@@ -140,7 +152,14 @@ pub fn render_detail(repo: &RepoState, detail: &DetailedStatus, width: usize, co
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Dim));
     }
-    let _ = queue!(out, Print(" [←/Esc] back  [r] refresh"));
+    if let Some(s) = op_status {
+        let _ = queue!(out, Print(" "), Print(s));
+    } else {
+        let _ = queue!(
+            out,
+            Print(" [←/Esc] back  [r] refresh  [p] push  [l] pull  [f] fetch")
+        );
+    }
     if color {
         let _ = queue!(out, SetAttribute(Attribute::Reset));
     }
