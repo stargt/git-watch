@@ -12,6 +12,22 @@ pub struct Config {
     pub git: GitConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub discovery: DiscoveryConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiscoveryConfig {
+    #[serde(default = "default_max_depth")]
+    pub max_depth: usize,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: default_max_depth(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,31 +108,47 @@ fn default_compact_threshold() -> usize {
 fn default_fetch_interval_sec() -> u64 {
     300
 }
+fn default_max_depth() -> usize {
+    1
+}
 fn default_true() -> bool {
     true
 }
 
-fn discover_repos_in_cwd() -> Vec<String> {
+fn discover_repos_in_cwd(max_depth: usize) -> Vec<String> {
     let Ok(cwd) = std::env::current_dir() else {
         return Vec::new();
     };
     let mut repos: Vec<String> = Vec::new();
-
-    if cwd.join(".git").exists() {
-        repos.push(cwd.to_string_lossy().to_string());
-    }
-
-    if let Ok(entries) = fs::read_dir(&cwd) {
-        let mut children: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().join(".git").exists())
-            .map(|e| e.path().to_string_lossy().to_string())
-            .collect();
-        children.sort();
-        repos.extend(children);
-    }
-
+    collect_repos(&cwd, max_depth, &mut repos);
+    repos.sort();
     repos
+}
+
+fn collect_repos(dir: &Path, remaining_depth: usize, out: &mut Vec<String>) {
+    if dir.join(".git").exists() {
+        out.push(dir.to_string_lossy().to_string());
+        return;
+    }
+    if remaining_depth == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let Ok(ft) = entry.file_type() else { continue };
+        if !ft.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
+        collect_repos(&path, remaining_depth - 1, out);
+    }
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -129,7 +161,7 @@ fn expand_tilde(path: &str) -> PathBuf {
 }
 
 impl Config {
-    pub fn load(path: &Path) -> Result<Self, String> {
+    pub fn load(path: &Path, depth_override: Option<usize>) -> Result<Self, String> {
         let mut config: Config = match fs::read_to_string(path) {
             Ok(content) => serde_yml::from_str(&content)
                 .map_err(|e| format!("Failed to parse config: {}", e))?,
@@ -138,7 +170,8 @@ impl Config {
         };
 
         if config.repos.is_empty() {
-            config.repos = discover_repos_in_cwd();
+            let depth = depth_override.unwrap_or(config.discovery.max_depth);
+            config.repos = discover_repos_in_cwd(depth);
         }
 
         config.repos = config

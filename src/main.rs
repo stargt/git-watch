@@ -19,6 +19,11 @@ struct Args {
     /// Path to config file
     #[arg(short, long, default_value = "config.yml")]
     config: PathBuf,
+
+    /// Max recursion depth when auto-discovering repos (overrides config).
+    /// 0 = cwd only, 1 = cwd + direct children, etc.
+    #[arg(short, long)]
+    depth: Option<usize>,
 }
 
 fn is_visible(repo: &model::RepoState, show_clean: bool) -> bool {
@@ -64,7 +69,7 @@ fn spawn_op(tx: &mpsc::Sender<Message>, repo: &model::RepoState, kind: OpKind) {
 fn main() {
     let args = Args::parse();
 
-    let cfg = match config::Config::load(&args.config) {
+    let cfg = match config::Config::load(&args.config, args.depth) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);
