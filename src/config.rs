@@ -109,7 +109,7 @@ fn default_fetch_interval_sec() -> u64 {
     300
 }
 fn default_max_depth() -> usize {
-    1
+    2
 }
 fn default_true() -> bool {
     true
