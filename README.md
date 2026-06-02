@@ -41,16 +41,50 @@ A macOS-only terminal UI that continuously monitors multiple local Git repositor
 ## Install
 
 ```bash
-# Clone and build
 git clone <repo-url>
 cd git-watch
-cargo build --release
+```
 
-# Copy binary to PATH
-cp target/release/git-watch /usr/local/bin/
+Then pick the method that fits your use case:
+
+**General use (recommended)** — installs to `~/.cargo/bin`, which rustup already
+adds to your PATH. No sudo, no PATH tweaks.
+
+```bash
+cargo install --path .
+```
+
+**Active development** — symlink to the build output so each `cargo build
+--release` is reflected immediately.
+Requires `~/.local/bin` to be on your PATH (it is *not* on macOS by default —
+add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile if needed).
+
+```bash
+cargo build --release
+ln -sfn "$PWD/target/release/git-watch" ~/.local/bin/git-watch
+```
+
+**System-wide (multi-user machines only)** — needs root and modifies a
+system path.
+
+```bash
+cargo build --release
+sudo cp target/release/git-watch /usr/local/bin/
 ```
 
 Requires: Rust toolchain, macOS, Git.
+
+## Uninstall
+
+Remove using the method matching how you installed. If you previously installed
+the binary into `/usr/local/bin` (the older instructions), clear it with the
+last command.
+
+```bash
+cargo uninstall git-watch         # if installed via `cargo install --path .`
+rm ~/.local/bin/git-watch         # if symlinked for development
+sudo rm /usr/local/bin/git-watch  # if copied system-wide (older method)
+```
 
 ## Usage
 
